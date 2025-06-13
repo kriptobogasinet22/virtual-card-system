@@ -232,8 +232,50 @@ async function createCardRedemptionRequest(
   }
 }
 
-// TRX cüzdan adresi
-const TRX_WALLET_ADDRESS = "TXYourTronWalletAddressHere"
+// TRX cüzdan adresini dinamik olarak al
+async function getTrxWalletAddress() {
+  try {
+    const response = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/get-settings`)
+    const data = await response.json()
+    return data.settings?.trx_wallet_address || "TXYourTronWalletAddressHere"
+  } catch (error) {
+    console.error("Error fetching TRX address:", error)
+    return "TXYourTronWalletAddressHere"
+  }
+}
+
+// Mesajları temizleme fonksiyonu
+async function clearChatHistory(chatId: number) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN
+  if (!botToken) return
+
+  try {
+    // Son 50 mesajı al ve sil
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/getUpdates?offset=-50`)
+    const result = await response.json()
+
+    if (result.ok && result.result) {
+      for (const update of result.result) {
+        if (update.message && update.message.chat.id === chatId) {
+          try {
+            await fetch(`https://api.telegram.org/bot${botToken}/deleteMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: chatId,
+                message_id: update.message.message_id,
+              }),
+            })
+          } catch (deleteError) {
+            // Mesaj silinemezse devam et
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Error clearing chat history:", error)
+  }
+}
 
 // Webhook handler
 export async function POST(req: NextRequest) {
@@ -283,6 +325,9 @@ export async function POST(req: NextRequest) {
       // /start komutu
       if (text === "/start") {
         console.log(`[${chatId}] Processing /start command`)
+
+        // Önceki mesajları temizle
+        await clearChatHistory(chatId)
 
         const welcomeMessage = `🤖 *Sanal Kart Satış Sistemine Hoş Geldiniz!*
 
@@ -385,6 +430,9 @@ Lütfen yapmak istediğiniz işlemi seçin:`
         const totalAmount = cardBalance + serviceFee
 
         console.log(`[${chatId}] Payment details calculated:`, { cardBalance, serviceFee, totalAmount })
+
+        // TRX adresini dinamik olarak al
+        const TRX_WALLET_ADDRESS = await getTrxWalletAddress()
 
         // Ödeme bilgilerini göster
         const paymentMessage = `💳 *Sanal Kart Satın Alma*
@@ -519,12 +567,14 @@ Talep ID: \`${redemptionRequest.id}\``,
       if (data === "buy_card") {
         console.log(`[${chatId}] Starting card purchase flow`)
 
+        // Önceki mesajları temizle
+        await clearChatHistory(chatId)
+
         await sendTelegramMessage(
           chatId,
           "💳 *Sanal Kart Satın Alma*\n\nLütfen satın almak istediğiniz kartın bakiyesini TL cinsinden girin:\n\nÖrnek: 500\n\n💡 Not: Girdiğiniz tutara %20 hizmet bedeli eklenecektir.\n\n📝 Minimum: 500 TL, Maksimum: 50.000 TL",
         )
 
-        // Kullanıcı durumunu güncelle
         setUserState(chatId, "waiting_card_balance", { user_id: userData?.id })
         console.log(`[${chatId}] State set to waiting_card_balance`)
       } else if (data === "payment_done") {
@@ -572,6 +622,9 @@ Talep ID: \`${redemptionRequest.id}\``,
         if (paymentRequest) {
           console.log(`[${chatId}] Payment request created successfully:`, paymentRequest.id)
 
+          // Önceki mesajları temizle
+          await clearChatHistory(chatId)
+
           await sendTelegramMessage(
             chatId,
             `✅ *Ödeme talebiniz alındı!*
@@ -582,7 +635,6 @@ Talep ID: \`${paymentRequest.id}\`
 ⏱️ İşlem süresi: 1-24 saat`,
           )
 
-          // Kullanıcı durumunu temizle
           setUserState(chatId, "main_menu")
         } else {
           console.error(`[${chatId}] Failed to create payment request`)
@@ -592,9 +644,13 @@ Talep ID: \`${paymentRequest.id}\`
           )
         }
       } else if (data === "cancel_payment") {
+        await clearChatHistory(chatId)
         await sendTelegramMessage(chatId, "❌ Ödeme işlemi iptal edildi.")
         setUserState(chatId, "main_menu")
       } else if (data === "redeem_card") {
+        // Önceki mesajları temizle
+        await clearChatHistory(chatId)
+
         // Kullanıcı bilgilerini al
         const userId = userData?.id
 
@@ -646,6 +702,9 @@ Talep ID: \`${paymentRequest.id}\`
         // TRX adresi iste
         await sendTelegramMessage(chatId, "💼 TRX cüzdan adresinizi girin:")
       } else if (data === "my_cards") {
+        // Önceki mesajları temizle
+        await clearChatHistory(chatId)
+
         // Kullanıcı bilgilerini al
         const userId = userData?.id
 

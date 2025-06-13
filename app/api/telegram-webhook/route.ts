@@ -10,7 +10,7 @@ async function sendTelegramMessage(chatId: number, text: string, options?: any) 
   }
 
   try {
-    console.log(`Sending message to chat ${chatId}: ${text.substring(0, 50)}...`)
+    console.log(`Sending message to chat ${chatId}`)
 
     const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: "POST",
@@ -25,14 +25,7 @@ async function sendTelegramMessage(chatId: number, text: string, options?: any) 
       }),
     })
 
-    const responseText = await response.text()
-    let result
-    try {
-      result = JSON.parse(responseText)
-    } catch (e) {
-      console.error("Failed to parse Telegram API response:", e)
-      return false
-    }
+    const result = await response.json()
 
     if (!result.ok) {
       console.error("Telegram API error:", result)
@@ -59,6 +52,7 @@ async function registerUser(telegramUser: any) {
         username: telegramUser.username,
         first_name: telegramUser.first_name,
         last_name: telegramUser.last_name,
+        user_metadata: { state: "main_menu" }, // Varsayılan durum
       })
       .select()
       .single()
@@ -80,12 +74,7 @@ async function updateUserState(telegramId: number, state: string, additionalData
   const supabase = createServerSupabaseClient()
 
   try {
-    const { data: userData } = await supabase.from("users").select("id").eq("telegram_id", telegramId).single()
-
-    if (!userData) {
-      console.error("User not found:", telegramId)
-      return false
-    }
+    console.log(`Updating user state for ${telegramId}: ${state}`, additionalData)
 
     const { error } = await supabase
       .from("users")
@@ -93,15 +82,17 @@ async function updateUserState(telegramId: number, state: string, additionalData
         user_metadata: {
           state,
           ...additionalData,
+          updated_at: new Date().toISOString(),
         },
       })
-      .eq("id", userData.id)
+      .eq("telegram_id", telegramId)
 
     if (error) {
       console.error("Error updating user state:", error)
       return false
     }
 
+    console.log(`User state updated successfully for ${telegramId}`)
     return true
   } catch (error) {
     console.error("Database error in updateUserState:", error)
@@ -114,24 +105,32 @@ async function getUserState(telegramId: number) {
   const supabase = createServerSupabaseClient()
 
   try {
-    const { data: userData } = await supabase
+    console.log(`Getting user state for ${telegramId}`)
+
+    const { data: userData, error } = await supabase
       .from("users")
       .select("id, user_metadata")
       .eq("telegram_id", telegramId)
       .single()
 
-    if (!userData) {
-      console.error("User not found:", telegramId)
-      return { state: null, data: {} }
+    if (error || !userData) {
+      console.error("User not found or error:", error)
+      return { userId: null, state: null, data: {} }
     }
 
+    const state = userData.user_metadata?.state || null
+    const data = userData.user_metadata || {}
+
+    console.log(`User state for ${telegramId}: ${state}`, data)
+
     return {
-      state: userData.user_metadata?.state || null,
-      data: userData.user_metadata || {},
+      userId: userData.id,
+      state,
+      data,
     }
   } catch (error) {
     console.error("Database error in getUserState:", error)
-    return { state: null, data: {} }
+    return { userId: null, state: null, data: {} }
   }
 }
 
@@ -260,10 +259,6 @@ export async function POST(req: NextRequest) {
         await registerUser(user)
       }
 
-      // Kullanıcı durumunu kontrol et
-      const { state, data: stateData } = await getUserState(chatId)
-      console.log(`User state for ${chatId}: ${state}`)
-
       // /start komutu
       if (text === "/start") {
         console.log("Processing /start command for chat:", chatId)
@@ -290,14 +285,32 @@ Lütfen yapmak istediğiniz işlemi seçin:`
 
         await sendTelegramMessage(chatId, welcomeMessage, { reply_markup: keyboard })
         await updateUserState(chatId, "main_menu")
+        return NextResponse.json({ ok: true })
       }
+
+      // Kullanıcı durumunu kontrol et
+      const { userId, state, data: stateData } = await getUserState(chatId)
+      console.log(`Current user state: ${state} for chat ${chatId}`)
+
       // Bakiye girişi bekleniyor mu?
-      else if (state === "waiting_card_balance") {
+      if (state === "waiting_card_balance") {
+        console.log(`Processing card balance input: ${text}`)
+
         // Bakiye değerini kontrol et
-        const cardBalance = Number.parseFloat(text)
+        const cardBalance = Number.parseFloat(text.replace(/[^\d.,]/g, "").replace(",", "."))
 
         if (isNaN(cardBalance) || cardBalance <= 0) {
-          await sendTelegramMessage(chatId, "❌ Geçersiz bakiye değeri. Lütfen pozitif bir sayı girin:")
+          await sendTelegramMessage(chatId, "❌ Geçersiz bakiye değeri. Lütfen pozitif bir sayı girin:\n\nÖrnek: 100")
+          return NextResponse.json({ ok: true })
+        }
+
+        if (cardBalance < 10) {
+          await sendTelegramMessage(chatId, "❌ Minimum kart bakiyesi 10 TL olmalıdır. Lütfen tekrar girin:")
+          return NextResponse.json({ ok: true })
+        }
+
+        if (cardBalance > 10000) {
+          await sendTelegramMessage(chatId, "❌ Maksimum kart bakiyesi 10.000 TL olabilir. Lütfen tekrar girin:")
           return NextResponse.json({ ok: true })
         }
 
@@ -306,8 +319,7 @@ Lütfen yapmak istediğiniz işlemi seçin:`
         const totalAmount = cardBalance + serviceFee
 
         // Ödeme bilgilerini göster
-        const message = `
-💳 *Sanal Kart Satın Alma*
+        const paymentMessage = `💳 *Sanal Kart Satın Alma*
 
 İstediğiniz Kart Bakiyesi: *${cardBalance.toFixed(2)} TL*
 Hizmet Bedeli (%20): *${serviceFee.toFixed(2)} TL*
@@ -315,12 +327,14 @@ Toplam Ödeme: *${totalAmount.toFixed(2)} TRX*
 
 Ödeme adresi: \`${TRX_WALLET_ADDRESS}\`
 
-Ödemeyi yaptıktan sonra "Ödeme Yaptım" butonuna tıklayın.
-        `
+Ödemeyi yaptıktan sonra "Ödeme Yaptım" butonuna tıklayın.`
 
-        await sendTelegramMessage(chatId, message, {
+        await sendTelegramMessage(chatId, paymentMessage, {
           reply_markup: {
-            inline_keyboard: [[{ text: "✅ Ödeme Yaptım", callback_data: "payment_done" }]],
+            inline_keyboard: [
+              [{ text: "✅ Ödeme Yaptım", callback_data: "payment_done" }],
+              [{ text: "❌ İptal Et", callback_data: "cancel_payment" }],
+            ],
           },
         })
 
@@ -328,6 +342,8 @@ Toplam Ödeme: *${totalAmount.toFixed(2)} TRX*
         await updateUserState(chatId, "waiting_payment_confirmation", {
           payment_info: { cardBalance, serviceFee, totalAmount },
         })
+
+        return NextResponse.json({ ok: true })
       }
       // TRX cüzdan adresi yanıtı
       else if (state === "waiting_trx_address") {
@@ -341,22 +357,14 @@ Toplam Ödeme: *${totalAmount.toFixed(2)} TRX*
 
         // Kart ID'sini al
         const cardId = stateData.selected_card_id
-        if (!cardId) {
+        if (!cardId || !userId) {
           await sendTelegramMessage(chatId, "❌ Bir hata oluştu. Lütfen tekrar kart seçin.")
           await updateUserState(chatId, "main_menu")
           return NextResponse.json({ ok: true })
         }
 
-        // Kullanıcı ID'sini al
-        const supabase = createServerSupabaseClient()
-        const { data: userData } = await supabase.from("users").select("id").eq("telegram_id", chatId).single()
-
-        if (!userData) {
-          await sendTelegramMessage(chatId, "❌ Kullanıcı bilgileriniz bulunamadı.")
-          return NextResponse.json({ ok: true })
-        }
-
         // Kart bilgilerini al
+        const supabase = createServerSupabaseClient()
         const { data: cardData } = await supabase.from("virtual_cards").select("*").eq("id", cardId).single()
 
         if (!cardData) {
@@ -365,18 +373,15 @@ Toplam Ödeme: *${totalAmount.toFixed(2)} TRX*
         }
 
         // Kart bozum talebi oluştur
-        const redemptionRequest = await createCardRedemptionRequest(userData.id, cardId, cardData.balance, trxAddress)
+        const redemptionRequest = await createCardRedemptionRequest(userId, cardId, cardData.balance, trxAddress)
 
         if (redemptionRequest) {
           await sendTelegramMessage(
             chatId,
-            `
-✅ *Kart bozum talebiniz alındı!*
+            `✅ *Kart bozum talebiniz alındı!*
 
 Talebiniz incelendikten sonra TRX adresinize ödeme yapılacaktır.
-Talep ID: \`${redemptionRequest.id}\`
-            `,
-            { parse_mode: "Markdown" },
+Talep ID: \`${redemptionRequest.id}\``,
           )
 
           // Kullanıcı durumunu temizle
@@ -387,11 +392,14 @@ Talep ID: \`${redemptionRequest.id}\`
             "❌ Kart bozum talebi oluşturulurken bir hata oluştu. Lütfen daha sonra tekrar deneyin.",
           )
         }
+
+        return NextResponse.json({ ok: true })
       }
       // Diğer mesajlar için genel yanıt
       else {
-        console.log("Sending general response to chat:", chatId)
+        console.log(`Unhandled message in state: ${state}`)
         await sendTelegramMessage(chatId, "Merhaba! Lütfen menüden bir seçenek seçin veya /start komutunu kullanın.")
+        return NextResponse.json({ ok: true })
       }
     }
 
@@ -426,43 +434,33 @@ Talep ID: \`${redemptionRequest.id}\`
       if (data === "buy_card") {
         await sendTelegramMessage(
           chatId,
-          "💳 *Sanal Kart Satın Alma*\n\nLütfen satın almak istediğiniz kartın bakiyesini TL cinsinden girin:\n\nÖrnek: 100\n\n💡 Not: Girdiğiniz tutara %20 hizmet bedeli eklenecektir.",
+          "💳 *Sanal Kart Satın Alma*\n\nLütfen satın almak istediğiniz kartın bakiyesini TL cinsinden girin:\n\nÖrnek: 100\n\n💡 Not: Girdiğiniz tutara %20 hizmet bedeli eklenecektir.\n\n📝 Minimum: 10 TL, Maksimum: 10.000 TL",
         )
 
         // Kullanıcı durumunu güncelle
         await updateUserState(chatId, "waiting_card_balance")
       } else if (data === "payment_done") {
         // Kullanıcı bilgilerini al
-        const { state, data: stateData } = await getUserState(chatId)
+        const { userId, state, data: stateData } = await getUserState(chatId)
 
-        if (state !== "waiting_payment_confirmation" || !stateData.payment_info) {
+        if (state !== "waiting_payment_confirmation" || !stateData.payment_info || !userId) {
           await sendTelegramMessage(chatId, "❌ Bir hata oluştu. Lütfen tekrar kart satın alma işlemini başlatın.")
           await updateUserState(chatId, "main_menu")
           return NextResponse.json({ ok: true })
         }
 
-        // Kullanıcı ID'sini al
-        const supabase = createServerSupabaseClient()
-        const { data: userData } = await supabase.from("users").select("id").eq("telegram_id", chatId).single()
-
-        if (!userData) {
-          await sendTelegramMessage(chatId, "❌ Kullanıcı bilgileriniz bulunamadı.")
-          return NextResponse.json({ ok: true })
-        }
-
         // Ödeme talebi oluştur
-        const paymentRequest = await createPaymentRequest(userData.id, stateData.payment_info.cardBalance)
+        const paymentRequest = await createPaymentRequest(userId, stateData.payment_info.cardBalance)
 
         if (paymentRequest) {
           await sendTelegramMessage(
             chatId,
-            `
-✅ *Ödeme talebiniz alındı!*
+            `✅ *Ödeme talebiniz alındı!*
 
 Talebiniz incelendikten sonra sanal kartınız size gönderilecektir.
 Talep ID: \`${paymentRequest.id}\`
-            `,
-            { parse_mode: "Markdown" },
+
+⏱️ İşlem süresi: 1-24 saat`,
           )
 
           // Kullanıcı durumunu temizle
@@ -473,18 +471,20 @@ Talep ID: \`${paymentRequest.id}\`
             "❌ Ödeme talebi oluşturulurken bir hata oluştu. Lütfen daha sonra tekrar deneyin.",
           )
         }
+      } else if (data === "cancel_payment") {
+        await sendTelegramMessage(chatId, "❌ Ödeme işlemi iptal edildi.")
+        await updateUserState(chatId, "main_menu")
       } else if (data === "redeem_card") {
-        // Kullanıcı ID'sini al
-        const supabase = createServerSupabaseClient()
-        const { data: userData } = await supabase.from("users").select("id").eq("telegram_id", chatId).single()
+        // Kullanıcı bilgilerini al
+        const { userId } = await getUserState(chatId)
 
-        if (!userData) {
+        if (!userId) {
           await sendTelegramMessage(chatId, "❌ Kullanıcı bilgileriniz bulunamadı.")
           return NextResponse.json({ ok: true })
         }
 
         // Kullanıcının kartlarını getir
-        const cards = await getUserCards(userData.id)
+        const cards = await getUserCards(userId)
 
         if (cards.length === 0) {
           await sendTelegramMessage(chatId, "❌ Henüz bir sanal kartınız bulunmamaktadır.")
@@ -515,17 +515,16 @@ Talep ID: \`${paymentRequest.id}\`
         // TRX adresi iste
         await sendTelegramMessage(chatId, "💼 TRX cüzdan adresinizi girin:")
       } else if (data === "my_cards") {
-        // Kullanıcı ID'sini al
-        const supabase = createServerSupabaseClient()
-        const { data: userData } = await supabase.from("users").select("id").eq("telegram_id", chatId).single()
+        // Kullanıcı bilgilerini al
+        const { userId } = await getUserState(chatId)
 
-        if (!userData) {
+        if (!userId) {
           await sendTelegramMessage(chatId, "❌ Kullanıcı bilgileriniz bulunamadı.")
           return NextResponse.json({ ok: true })
         }
 
         // Kullanıcının kartlarını getir
-        const cards = await getUserCards(userData.id)
+        const cards = await getUserCards(userId)
 
         if (cards.length === 0) {
           await sendTelegramMessage(chatId, "❌ Henüz bir sanal kartınız bulunmamaktadır.")
@@ -544,8 +543,7 @@ Talep ID: \`${paymentRequest.id}\`
 
         await sendTelegramMessage(chatId, message)
       } else if (data === "help") {
-        const helpMessage = `
-🔍 *Yardım & SSS*
+        const helpMessage = `🔍 *Yardım & SSS*
 
 *Sanal Kart Nedir?*
 Sanal kartlar, fiziksel bir karta ihtiyaç duymadan online alışveriş yapmanızı sağlayan kartlardır.
@@ -559,8 +557,7 @@ Kartınızda kalan bakiyeyi TRX olarak geri alabilirsiniz.
 *Kartım Güvenli mi?*
 Evet, tüm kart bilgileri güvenli bir şekilde saklanmaktadır.
 
-Daha fazla soru için bize ulaşabilirsiniz.
-        `
+Daha fazla soru için bize ulaşabilirsiniz.`
 
         await sendTelegramMessage(chatId, helpMessage)
       }
@@ -573,4 +570,3 @@ Daha fazla soru için bize ulaşabilirsiniz.
     return NextResponse.json({ error: "Internal server error", message: error.message }, { status: 500 })
   }
 }
-

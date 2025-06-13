@@ -10,6 +10,7 @@ export async function POST(req: NextRequest) {
     await requireAuth()
 
     const { redemptionId, telegramId } = await req.json()
+    console.log("Complete redemption request:", { redemptionId, telegramId })
 
     if (!redemptionId || !telegramId) {
       return NextResponse.json({ success: false, message: "Eksik parametreler" }, { status: 400 })
@@ -20,7 +21,7 @@ export async function POST(req: NextRequest) {
     // Önce bozum talebini al ve kart ID'sini bul
     const { data: redemptionData, error: redemptionSelectError } = await supabase
       .from("card_redemption_requests")
-      .select("card_id")
+      .select("card_id, remaining_balance")
       .eq("id", redemptionId)
       .single()
 
@@ -28,6 +29,8 @@ export async function POST(req: NextRequest) {
       console.error("Redemption not found:", redemptionSelectError)
       return NextResponse.json({ success: false, message: "Bozum talebi bulunamadı" }, { status: 404 })
     }
+
+    console.log("Found redemption data:", redemptionData)
 
     // Bozum talebini güncelle
     const { error: redemptionError } = await supabase
@@ -43,26 +46,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: "Bozum güncellenirken bir hata oluştu" }, { status: 500 })
     }
 
+    console.log("Redemption status updated to completed")
+
     // Kartı kullanılmış olarak işaretle ve bakiyesini sıfırla
-    const { error: cardError } = await supabase
+    const { data: updatedCard, error: cardError } = await supabase
       .from("virtual_cards")
       .update({
         is_used: true,
         balance: 0,
-        updated_at: new Date().toISOString(),
       })
       .eq("id", redemptionData.card_id)
+      .select()
 
     if (cardError) {
       console.error("Error updating card:", cardError)
-      // Bozum tamamlandı ama kart güncellenemedi, yine de devam et
+      return NextResponse.json({ success: false, message: "Kart güncellenirken bir hata oluştu" }, { status: 500 })
     }
+
+    console.log("Card updated successfully:", updatedCard)
 
     // Kullanıcıya bildirim gönder
     const botToken = process.env.TELEGRAM_BOT_TOKEN
     if (botToken) {
       try {
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -71,18 +78,23 @@ export async function POST(req: NextRequest) {
             chat_id: telegramId,
             text: `✅ *Kart Bozum Tamamlandı*
 
-Kart bozum talebiniz tamamlandı. TRX ödemeniz cüzdan adresinize gönderilmiştir.
+Kart bozum talebiniz tamamlandı. ${redemptionData.remaining_balance} TL karşılığı TRX ödemeniz cüzdan adresinize gönderilmiştir.
+
+Kartınız artık kullanılmış olarak işaretlenmiştir.
 
 Teşekkür ederiz!`,
             parse_mode: "Markdown",
           }),
         })
+
+        const result = await response.json()
+        console.log("Telegram notification result:", result)
       } catch (notificationError) {
         console.error("Notification error:", notificationError)
       }
     }
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, message: "Bozum başarıyla tamamlandı" })
   } catch (error) {
     console.error("Complete redemption error:", error)
     return NextResponse.json({ success: false, message: "Bir hata oluştu" }, { status: 500 })

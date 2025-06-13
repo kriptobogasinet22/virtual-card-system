@@ -101,64 +101,89 @@ async function editMessage(chatId: number, messageId: number, text: string, opti
   }
 }
 
-// registerUser fonksiyonu
-async function registerUser(telegramUser: any) {
+// Geliştirilmiş kullanıcı kayıt fonksiyonu
+async function ensureUserExists(telegramUser: any) {
   const supabase = createServerSupabaseClient()
 
   try {
-    console.log(`[${telegramUser.id}] Registering user:`, telegramUser)
+    console.log(`[${telegramUser.id}] Ensuring user exists:`, {
+      id: telegramUser.id,
+      username: telegramUser.username,
+      first_name: telegramUser.first_name,
+      last_name: telegramUser.last_name,
+    })
 
+    // Önce kullanıcının var olup olmadığını kontrol et
     const { data: existingUser, error: selectError } = await supabase
       .from("users")
       .select("*")
       .eq("telegram_id", telegramUser.id)
-      .single()
+      .maybeSingle()
 
     if (existingUser && !selectError) {
       console.log(`[${telegramUser.id}] User already exists:`, existingUser.id)
-      return existingUser
+
+      // Kullanıcı bilgilerini güncelle (username değişmiş olabilir)
+      const { data: updatedUser, error: updateError } = await supabase
+        .from("users")
+        .update({
+          username: telegramUser.username || null,
+          first_name: telegramUser.first_name || null,
+          last_name: telegramUser.last_name || null,
+        })
+        .eq("telegram_id", telegramUser.id)
+        .select()
+        .single()
+
+      if (updateError) {
+        console.error(`[${telegramUser.id}] Error updating user:`, updateError)
+        return existingUser // Güncelleme başarısız olsa bile mevcut kullanıcıyı döndür
+      }
+
+      console.log(`[${telegramUser.id}] User updated successfully`)
+      return updatedUser || existingUser
     }
 
-    const { data: newUser, error: insertError } = await supabase
-      .from("users")
-      .insert({
-        telegram_id: telegramUser.id,
-        username: telegramUser.username || null,
-        first_name: telegramUser.first_name || null,
-        last_name: telegramUser.last_name || null,
-        user_metadata: { created_at: new Date().toISOString() },
-      })
-      .select()
-      .single()
+    // Kullanıcı yoksa oluştur
+    console.log(`[${telegramUser.id}] Creating new user...`)
+
+    const newUserData = {
+      telegram_id: telegramUser.id,
+      username: telegramUser.username || null,
+      first_name: telegramUser.first_name || null,
+      last_name: telegramUser.last_name || null,
+      created_at: new Date().toISOString(),
+    }
+
+    console.log(`[${telegramUser.id}] Inserting user data:`, newUserData)
+
+    const { data: newUser, error: insertError } = await supabase.from("users").insert(newUserData).select().single()
 
     if (insertError) {
       console.error(`[${telegramUser.id}] Error creating user:`, insertError)
+
+      // Eğer unique constraint hatası ise, tekrar dene
+      if (insertError.code === "23505") {
+        console.log(`[${telegramUser.id}] Unique constraint error, trying to fetch existing user`)
+        const { data: retryUser, error: retryError } = await supabase
+          .from("users")
+          .select("*")
+          .eq("telegram_id", telegramUser.id)
+          .single()
+
+        if (!retryError && retryUser) {
+          console.log(`[${telegramUser.id}] Found existing user on retry:`, retryUser.id)
+          return retryUser
+        }
+      }
+
       return null
     }
 
     console.log(`[${telegramUser.id}] User created successfully:`, newUser.id)
     return newUser
   } catch (error) {
-    console.error(`[${telegramUser.id}] Database error in registerUser:`, error)
-    return null
-  }
-}
-
-async function getUserFromDatabase(telegramId: number) {
-  const supabase = createServerSupabaseClient()
-
-  try {
-    const { data: user, error } = await supabase.from("users").select("*").eq("telegram_id", telegramId).single()
-
-    if (error) {
-      console.error(`[${telegramId}] Error fetching user:`, error)
-      return null
-    }
-
-    console.log(`[${telegramId}] User found in database:`, user.id)
-    return user
-  } catch (error) {
-    console.error(`[${telegramId}] Database error in getUserFromDatabase:`, error)
+    console.error(`[${telegramUser.id}] Database error in ensureUserExists:`, error)
     return null
   }
 }
@@ -274,7 +299,7 @@ async function createCardRedemptionRequest(
   }
 }
 
-// TRX cüzdan adresini al - düzeltilmiş versiyon
+// TRX cüzdan adresini al
 function getTrxWalletAddress() {
   try {
     console.log("Getting TRX wallet address from global settings...")
@@ -319,16 +344,27 @@ export async function POST(req: NextRequest) {
 
       console.log(`[${chatId}] Processing message: "${text}"`)
 
+      // Kullanıcıyı kaydet/güncelle - HER ZAMAN
       let userData = null
       if (user) {
-        userData = await registerUser(user)
-        if (!userData) {
-          console.error(`[${chatId}] Failed to register user, trying to fetch from database`)
-          userData = await getUserFromDatabase(user.id)
-        }
-      }
+        console.log(`[${chatId}] Ensuring user exists for:`, user)
+        userData = await ensureUserExists(user)
 
-      console.log(`[${chatId}] User data:`, userData ? userData.id : "null")
+        if (!userData) {
+          console.error(`[${chatId}] CRITICAL: Failed to ensure user exists`)
+          await sendTelegramMessage(
+            chatId,
+            "❌ *Sistem Hatası*\n\nKullanıcı kaydı oluşturulamadı. Lütfen birkaç saniye bekleyip tekrar deneyin.\n\n🔄 Sorun devam ederse /start komutunu tekrar kullanın.",
+          )
+          return NextResponse.json({ ok: true })
+        }
+
+        console.log(`[${chatId}] User ensured successfully:`, userData.id)
+      } else {
+        console.error(`[${chatId}] No user data in message`)
+        await sendTelegramMessage(chatId, "❌ Kullanıcı bilgileri alınamadı. Lütfen tekrar deneyin.")
+        return NextResponse.json({ ok: true })
+      }
 
       // /start komutu
       if (text === "/start") {
@@ -356,7 +392,7 @@ Merhaba ${user?.first_name || "Değerli Müşterimiz"}! 👋
         }
 
         await sendTelegramMessage(chatId, welcomeMessage, { reply_markup: keyboard })
-        setUserState(chatId, "main_menu", { user_id: userData?.id })
+        setUserState(chatId, "main_menu", { user_id: userData.id })
         return NextResponse.json({ ok: true })
       }
 
@@ -364,15 +400,7 @@ Merhaba ${user?.first_name || "Değerli Müşterimiz"}! 👋
       if (text === "/mycards") {
         console.log(`[${chatId}] Processing /mycards command`)
 
-        const userId = userData?.id
-
-        if (!userId) {
-          await sendTelegramMessage(
-            chatId,
-            "❌ *Kullanıcı Bulunamadı*\n\nLütfen önce /start komutunu kullanarak sisteme kayıt olun.",
-          )
-          return NextResponse.json({ ok: true })
-        }
+        const userId = userData.id
 
         const cards = await getUserCards(userId)
 
@@ -473,11 +501,11 @@ Merhaba ${user?.first_name || "Değerli Müşterimiz"}! 👋
 
         setUserState(chatId, "waiting_payment_confirmation", {
           payment_info: { cardBalance, serviceFee, totalAmount },
-          user_id: userData?.id,
+          user_id: userData.id,
           telegram_id: chatId,
         })
 
-        console.log(`[${chatId}] State updated with user_id: ${userData?.id}`)
+        console.log(`[${chatId}] State updated with user_id: ${userData.id}`)
         return NextResponse.json({ ok: true })
       }
       // TRX cüzdan adresi yanıtı
@@ -493,7 +521,7 @@ Merhaba ${user?.first_name || "Değerli Müşterimiz"}! 👋
         }
 
         const cardId = stateData.selected_card_id
-        const userId = stateData.user_id
+        const userId = stateData.user_id || userData.id
 
         if (!cardId || !userId) {
           await sendTelegramMessage(chatId, "❌ Bir hata oluştu. Lütfen tekrar kart seçin.")
@@ -563,16 +591,23 @@ Teşekkür ederiz! 🙏`,
         return NextResponse.json({ ok: true })
       }
 
+      // Kullanıcıyı kaydet/güncelle - HER ZAMAN
       let userData = null
       if (user) {
-        userData = await registerUser(user)
-        if (!userData) {
-          console.error(`[${chatId}] Failed to register user, trying to fetch from database`)
-          userData = await getUserFromDatabase(user.id)
-        }
-      }
+        console.log(`[${chatId}] Ensuring user exists for callback:`, user)
+        userData = await ensureUserExists(user)
 
-      console.log(`[${chatId}] Callback user data:`, userData ? userData.id : "null")
+        if (!userData) {
+          console.error(`[${chatId}] CRITICAL: Failed to ensure user exists in callback`)
+          await sendTelegramMessage(
+            chatId,
+            "❌ *Sistem Hatası*\n\nKullanıcı kaydı oluşturulamadı. Lütfen /start komutunu kullanın.",
+          )
+          return NextResponse.json({ ok: true })
+        }
+
+        console.log(`[${chatId}] User ensured successfully in callback:`, userData.id)
+      }
 
       // Callback query'yi acknowledge et
       const botToken = process.env.TELEGRAM_BOT_TOKEN
@@ -613,8 +648,8 @@ Teşekkür ederiz! 🙏`,
           )
         }
 
-        setUserState(chatId, "waiting_card_balance", { user_id: userData?.id })
-        console.log(`[${chatId}] State set to waiting_card_balance`)
+        setUserState(chatId, "waiting_card_balance", { user_id: userData.id })
+        console.log(`[${chatId}] State set to waiting_card_balance with user_id: ${userData.id}`)
       } else if (data === "payment_done") {
         console.log(`[${chatId}] Processing payment_done callback`)
 
@@ -627,17 +662,8 @@ Teşekkür ederiz! 🙏`,
           return NextResponse.json({ ok: true })
         }
 
-        let userId = stateData.user_id || userData?.id
-
-        if (!userId && stateData.telegram_id) {
-          const dbUser = await getUserFromDatabase(stateData.telegram_id)
-          userId = dbUser?.id
-        }
-
-        if (!userId) {
-          const dbUser = await getUserFromDatabase(chatId)
-          userId = dbUser?.id
-        }
+        // Kullanıcı ID'sini al - öncelik sırası: stateData.user_id > userData.id
+        const userId = stateData.user_id || userData.id
 
         console.log(`[${chatId}] Final userId for payment: ${userId}`)
 
@@ -690,12 +716,7 @@ Teşekkür ederiz! 🙏`,
         }
         setUserState(chatId, "main_menu")
       } else if (data === "redeem_card") {
-        const userId = userData?.id
-
-        if (!userId) {
-          await sendTelegramMessage(chatId, "❌ Kullanıcı bilgileriniz bulunamadı.")
-          return NextResponse.json({ ok: true })
-        }
+        const userId = userData.id
 
         const cards = await getUserCards(userId)
 
@@ -751,7 +772,7 @@ Bozmak istediğiniz kartı seçin:`,
 
         setUserState(chatId, "waiting_trx_address", {
           selected_card_id: cardId,
-          user_id: userData?.id,
+          user_id: userData.id,
         })
 
         if (messageId) {
@@ -768,14 +789,7 @@ Bozmak istediğiniz kartı seçin:`,
           )
         }
       } else if (data === "my_cards") {
-        const userId = userData?.id
-
-        if (!userId) {
-          if (messageId) {
-            await editMessage(chatId, messageId, "❌ Kullanıcı bilgileriniz bulunamadı.")
-          }
-          return NextResponse.json({ ok: true })
-        }
+        const userId = userData.id
 
         const cards = await getUserCards(userId)
 

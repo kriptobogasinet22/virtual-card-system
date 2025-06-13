@@ -53,30 +53,67 @@ async function sendTelegramMessage(chatId: number, text: string, options?: any) 
   }
 }
 
-// Kullanıcı kayıt fonksiyonu
+// registerUser fonksiyonunu güncelle - daha güvenilir hale getir
 async function registerUser(telegramUser: any) {
   const supabase = createServerSupabaseClient()
 
   try {
-    const { data, error } = await supabase
+    console.log(`[${telegramUser.id}] Registering user:`, telegramUser)
+
+    // Önce kullanıcının var olup olmadığını kontrol et
+    const { data: existingUser, error: selectError } = await supabase
       .from("users")
-      .upsert({
+      .select("*")
+      .eq("telegram_id", telegramUser.id)
+      .single()
+
+    if (existingUser && !selectError) {
+      console.log(`[${telegramUser.id}] User already exists:`, existingUser.id)
+      return existingUser
+    }
+
+    // Kullanıcı yoksa oluştur
+    const { data: newUser, error: insertError } = await supabase
+      .from("users")
+      .insert({
         telegram_id: telegramUser.id,
-        username: telegramUser.username,
-        first_name: telegramUser.first_name,
-        last_name: telegramUser.last_name,
+        username: telegramUser.username || null,
+        first_name: telegramUser.first_name || null,
+        last_name: telegramUser.last_name || null,
+        user_metadata: { created_at: new Date().toISOString() },
       })
       .select()
       .single()
 
-    if (error) {
-      console.error("Error registering user:", error)
+    if (insertError) {
+      console.error(`[${telegramUser.id}] Error creating user:`, insertError)
       return null
     }
 
-    return data
+    console.log(`[${telegramUser.id}] User created successfully:`, newUser.id)
+    return newUser
   } catch (error) {
-    console.error("Database error in registerUser:", error)
+    console.error(`[${telegramUser.id}] Database error in registerUser:`, error)
+    return null
+  }
+}
+
+// getUserFromDatabase fonksiyonu ekle
+async function getUserFromDatabase(telegramId: number) {
+  const supabase = createServerSupabaseClient()
+
+  try {
+    const { data: user, error } = await supabase.from("users").select("*").eq("telegram_id", telegramId).single()
+
+    if (error) {
+      console.error(`[${telegramId}] Error fetching user:`, error)
+      return null
+    }
+
+    console.log(`[${telegramId}] User found in database:`, user.id)
+    return user
+  } catch (error) {
+    console.error(`[${telegramId}] Database error in getUserFromDatabase:`, error)
     return null
   }
 }
@@ -217,7 +254,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
     }
 
-    // Mesaj işleme
+    // Mesaj işleme bölümünde - kullanıcı kaydını her zaman yap
     if (update.message) {
       const message = update.message
       const chatId = message.chat.id
@@ -226,11 +263,17 @@ export async function POST(req: NextRequest) {
 
       console.log(`[${chatId}] Processing message: "${text}"`)
 
-      // Kullanıcıyı kaydet
+      // Kullanıcıyı kaydet ve ID'sini al
       let userData = null
       if (user) {
         userData = await registerUser(user)
+        if (!userData) {
+          console.error(`[${chatId}] Failed to register user, trying to fetch from database`)
+          userData = await getUserFromDatabase(user.id)
+        }
       }
+
+      console.log(`[${chatId}] User data:`, userData ? userData.id : "null")
 
       // /start komutu
       if (text === "/start") {
@@ -257,13 +300,13 @@ Lütfen yapmak istediğiniz işlemi seçin:`
         }
 
         await sendTelegramMessage(chatId, welcomeMessage, { reply_markup: keyboard })
-        setUserState(chatId, "main_menu")
+        setUserState(chatId, "main_menu", { user_id: userData?.id })
         return NextResponse.json({ ok: true })
       }
 
       // Kullanıcı durumunu kontrol et
       const { state, data: stateData } = getUserState(chatId)
-      console.log(`[${chatId}] Current state: ${state}`)
+      console.log(`[${chatId}] Current state: ${state}`, stateData)
 
       // Bakiye girişi bekleniyor mu?
       if (state === "waiting_card_balance") {
@@ -319,12 +362,14 @@ Toplam Ödeme: *${totalAmount.toFixed(2)} TRX*
           },
         })
 
-        // Kullanıcı durumunu güncelle
+        // Kullanıcı durumunu güncelle - user_id'yi kesinlikle kaydet
         setUserState(chatId, "waiting_payment_confirmation", {
           payment_info: { cardBalance, serviceFee, totalAmount },
           user_id: userData?.id,
+          telegram_id: chatId,
         })
 
+        console.log(`[${chatId}] State updated with user_id: ${userData?.id}`)
         return NextResponse.json({ ok: true })
       }
       // TRX cüzdan adresi yanıtı
@@ -387,7 +432,7 @@ Talep ID: \`${redemptionRequest.id}\``,
       }
     }
 
-    // Callback query işleme
+    // Callback query işleme bölümünde de aynı şekilde güncelle
     if (update.callback_query) {
       const callbackQuery = update.callback_query
       const chatId = callbackQuery.message?.chat.id
@@ -401,11 +446,17 @@ Talep ID: \`${redemptionRequest.id}\``,
         return NextResponse.json({ ok: true })
       }
 
-      // Kullanıcıyı kaydet
+      // Kullanıcıyı kaydet ve ID'sini al
       let userData = null
       if (user) {
         userData = await registerUser(user)
+        if (!userData) {
+          console.error(`[${chatId}] Failed to register user, trying to fetch from database`)
+          userData = await getUserFromDatabase(user.id)
+        }
       }
+
+      console.log(`[${chatId}] Callback user data:`, userData ? userData.id : "null")
 
       // Callback query'yi acknowledge et
       const botToken = process.env.TELEGRAM_BOT_TOKEN
@@ -433,8 +484,11 @@ Talep ID: \`${redemptionRequest.id}\``,
         setUserState(chatId, "waiting_card_balance", { user_id: userData?.id })
         console.log(`[${chatId}] State set to waiting_card_balance`)
       } else if (data === "payment_done") {
+        console.log(`[${chatId}] Processing payment_done callback`)
+
         // Kullanıcı bilgilerini al
         const { state, data: stateData } = getUserState(chatId)
+        console.log(`[${chatId}] Payment state:`, state, stateData)
 
         if (state !== "waiting_payment_confirmation" || !stateData.payment_info) {
           await sendTelegramMessage(chatId, "❌ Bir hata oluştu. Lütfen tekrar kart satın alma işlemini başlatın.")
@@ -442,9 +496,29 @@ Talep ID: \`${redemptionRequest.id}\``,
           return NextResponse.json({ ok: true })
         }
 
-        const userId = stateData.user_id || userData?.id
+        // Kullanıcı ID'sini farklı kaynaklardan al
+        let userId = stateData.user_id || userData?.id
+
+        // Eğer hala userId yoksa, telegram_id ile veritabanından bul
+        if (!userId && stateData.telegram_id) {
+          const dbUser = await getUserFromDatabase(stateData.telegram_id)
+          userId = dbUser?.id
+        }
+
+        // Son çare olarak chatId ile bul
         if (!userId) {
-          await sendTelegramMessage(chatId, "❌ Kullanıcı bilgileriniz bulunamadı.")
+          const dbUser = await getUserFromDatabase(chatId)
+          userId = dbUser?.id
+        }
+
+        console.log(`[${chatId}] Final userId for payment: ${userId}`)
+
+        if (!userId) {
+          await sendTelegramMessage(
+            chatId,
+            "❌ Kullanıcı bilgileriniz bulunamadı. Lütfen /start komutunu kullanarak tekrar başlayın.",
+          )
+          clearUserState(chatId)
           return NextResponse.json({ ok: true })
         }
 

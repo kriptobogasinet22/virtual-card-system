@@ -150,13 +150,14 @@ export default function CardsTable({ cards }: CardsTableProps) {
       })
 
       const result = await response.json()
+      console.log("Update balance result:", result)
 
       if (response.ok && result.success) {
         setSuccess(result.message || "Bakiye başarıyla güncellendi")
         setTimeout(() => {
           setIsEditBalanceDialogOpen(false)
           setSuccess("")
-          router.refresh()
+          window.location.reload() // Sayfayı yenile
         }, 1500)
       } else {
         setError(result.message || "Bakiye güncellenirken bir hata oluştu")

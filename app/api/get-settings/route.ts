@@ -1,13 +1,9 @@
 import { NextResponse } from "next/server"
-
-// Aynı settings objesini kullan
-const settings = {
-  trx_wallet_address: "TXYourTronWalletAddressHere",
-  card_price: "50",
-}
+import { getGlobalSettings } from "@/lib/settings"
 
 export async function GET() {
   try {
+    const settings = getGlobalSettings()
     console.log("Public settings request, returning:", settings)
     return NextResponse.json({ success: true, settings })
   } catch (error) {
@@ -19,15 +15,5 @@ export async function GET() {
         card_price: "50",
       },
     })
-  }
-}
-
-// Settings'i güncellemek için export
-export function updateSettings(newSettings: any) {
-  if (newSettings.trx_wallet_address) {
-    settings.trx_wallet_address = newSettings.trx_wallet_address
-  }
-  if (newSettings.card_price) {
-    settings.card_price = newSettings.card_price
   }
 }

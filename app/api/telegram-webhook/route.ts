@@ -6,10 +6,11 @@ async function sendTelegramMessage(chatId: number, text: string, options?: any) 
   const botToken = process.env.TELEGRAM_BOT_TOKEN
   if (!botToken) {
     console.error("TELEGRAM_BOT_TOKEN not found")
-    return
+    return false
   }
 
   try {
+    console.log("Sending message to chat:", chatId)
     const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: "POST",
       headers: {
@@ -25,9 +26,16 @@ async function sendTelegramMessage(chatId: number, text: string, options?: any) 
 
     const result = await response.json()
     console.log("Telegram API response:", result)
-    return result
+
+    if (!result.ok) {
+      console.error("Telegram API error:", result)
+      return false
+    }
+
+    return true
   } catch (error) {
     console.error("Error sending Telegram message:", error)
+    return false
   }
 }
 
@@ -60,13 +68,19 @@ async function registerUser(telegramUser: any) {
 
 export async function POST(req: NextRequest) {
   try {
-    console.log("Webhook received")
+    console.log("=== Webhook received ===")
+    console.log("Headers:", Object.fromEntries(req.headers.entries()))
+    console.log("URL:", req.url)
 
     // Webhook secret kontrolü
     const secret = req.nextUrl.searchParams.get("secret")
     const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET
 
-    console.log("Secret check:", { received: secret, expected: expectedSecret })
+    console.log("Secret check:", {
+      received: secret ? "***" : "null",
+      expected: expectedSecret ? "***" : "null",
+      match: secret === expectedSecret,
+    })
 
     if (!expectedSecret) {
       console.error("TELEGRAM_WEBHOOK_SECRET not configured")
@@ -80,7 +94,8 @@ export async function POST(req: NextRequest) {
 
     // Request body'yi parse et
     const update = await req.json()
-    console.log("Telegram update received:", JSON.stringify(update, null, 2))
+    console.log("=== Telegram update ===")
+    console.log(JSON.stringify(update, null, 2))
 
     // Mesaj işleme
     if (update.message) {
@@ -89,7 +104,7 @@ export async function POST(req: NextRequest) {
       const text = message.text
       const user = message.from
 
-      console.log("Processing message:", { chatId, text, user })
+      console.log("Processing message:", { chatId, text, userId: user?.id })
 
       // Kullanıcıyı kaydet
       if (user) {
@@ -98,8 +113,9 @@ export async function POST(req: NextRequest) {
 
       // /start komutu
       if (text === "/start") {
-        const welcomeMessage = `
-🤖 *Sanal Kart Satış Sistemine Hoş Geldiniz!*
+        console.log("Processing /start command")
+
+        const welcomeMessage = `🤖 *Sanal Kart Satış Sistemine Hoş Geldiniz!*
 
 Merhaba ${user?.first_name || ""}!
 
@@ -108,8 +124,7 @@ Bu bot ile:
 🔄 Kart bozumu yapabilirsiniz
 📋 Kartlarınızı görüntüleyebilirsiniz
 
-Lütfen yapmak istediğiniz işlemi seçin:
-        `
+Lütfen yapmak istediğiniz işlemi seçin:`
 
         const keyboard = {
           inline_keyboard: [
@@ -120,11 +135,14 @@ Lütfen yapmak istediğiniz işlemi seçin:
           ],
         }
 
-        await sendTelegramMessage(chatId, welcomeMessage, { reply_markup: keyboard })
+        const sent = await sendTelegramMessage(chatId, welcomeMessage, { reply_markup: keyboard })
+        console.log("Welcome message sent:", sent)
+
         return NextResponse.json({ ok: true })
       }
 
       // Diğer mesajlar için genel yanıt
+      console.log("Sending general response")
       await sendTelegramMessage(chatId, "Merhaba! Lütfen menüden bir seçenek seçin veya /start komutunu kullanın.")
     }
 
@@ -135,10 +153,24 @@ Lütfen yapmak istediğiniz işlemi seçin:
       const data = callbackQuery.data
       const user = callbackQuery.from
 
-      console.log("Processing callback query:", { chatId, data, user })
+      console.log("Processing callback query:", { chatId, data, userId: user?.id })
 
       if (!chatId) {
         return NextResponse.json({ ok: true })
+      }
+
+      // Callback query'yi acknowledge et
+      const botToken = process.env.TELEGRAM_BOT_TOKEN
+      if (botToken) {
+        try {
+          await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ callback_query_id: callbackQuery.id }),
+          })
+        } catch (error) {
+          console.error("Error answering callback query:", error)
+        }
       }
 
       if (data === "buy_card") {
@@ -151,8 +183,7 @@ Lütfen yapmak istediğiniz işlemi seçin:
       } else if (data === "my_cards") {
         await sendTelegramMessage(chatId, "📋 Kartlarım özelliği yakında aktif olacak.")
       } else if (data === "help") {
-        const helpMessage = `
-🔍 *Yardım & SSS*
+        const helpMessage = `🔍 *Yardım & SSS*
 
 *Sanal Kart Nedir?*
 Sanal kartlar, fiziksel bir karta ihtiyaç duymadan online alışveriş yapmanızı sağlayan kartlardır.
@@ -163,15 +194,16 @@ Sanal kartlar, fiziksel bir karta ihtiyaç duymadan online alışveriş yapmanı
 *Güvenli mi?*
 Evet, tüm işlemler güvenli bir şekilde gerçekleştirilir.
 
-Daha fazla bilgi için destek ekibimizle iletişime geçebilirsiniz.
-        `
+Daha fazla bilgi için destek ekibimizle iletişime geçebilirsiniz.`
+
         await sendTelegramMessage(chatId, helpMessage)
       }
     }
 
+    console.log("=== Webhook processed successfully ===")
     return NextResponse.json({ ok: true })
   } catch (error) {
-    console.error("Webhook error:", error)
+    console.error("=== Webhook error ===", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

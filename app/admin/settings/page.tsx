@@ -35,12 +35,12 @@ export default function SettingsPage() {
           return
         }
 
-        // Ayarları yükle (gerçek bir API olsaydı)
-        // const settingsResponse = await fetch("/api/admin/settings")
-        // const settingsData = await settingsResponse.json()
-        // if (settingsData.success) {
-        //   setSettings(settingsData.settings)
-        // }
+        // Ayarları yükle
+        const settingsResponse = await fetch("/api/admin/settings")
+        const settingsData = await settingsResponse.json()
+        if (settingsData.success) {
+          setSettings(settingsData.settings)
+        }
       } catch (error) {
         console.error("Error:", error)
       } finally {
@@ -58,24 +58,21 @@ export default function SettingsPage() {
     setError("")
 
     try {
-      // Gerçek bir API olsaydı
-      // const response = await fetch("/api/admin/settings", {
-      //   method: "POST",
-      //   headers: {
-      //     "Content-Type": "application/json",
-      //   },
-      //   body: JSON.stringify(settings),
-      // })
-      // const data = await response.json()
-      // if (data.success) {
-      //   setSuccess(true)
-      // } else {
-      //   setError(data.message || "Ayarlar kaydedilirken bir hata oluştu")
-      // }
+      const response = await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(settings),
+      })
 
-      // Demo için başarılı olduğunu varsayalım
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      setSuccess(true)
+      const data = await response.json()
+
+      if (data.success) {
+        setSuccess(true)
+      } else {
+        setError(data.message || "Ayarlar kaydedilirken bir hata oluştu")
+      }
     } catch (err) {
       setError("Bir hata oluştu. Lütfen tekrar deneyin.")
     } finally {

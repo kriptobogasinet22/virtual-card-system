@@ -1,31 +1,33 @@
 import { NextResponse } from "next/server"
-import { readFile } from "fs/promises"
-import { join } from "path"
 
-const SETTINGS_FILE = join(process.cwd(), "settings.json")
-
-// Varsayılan ayarlar
-const defaultSettings = {
+// Aynı settings objesini kullan
+const settings = {
   trx_wallet_address: "TXYourTronWalletAddressHere",
   card_price: "50",
 }
 
-async function getSettings() {
+export async function GET() {
   try {
-    const data = await readFile(SETTINGS_FILE, "utf8")
-    return JSON.parse(data)
+    console.log("Public settings request, returning:", settings)
+    return NextResponse.json({ success: true, settings })
   } catch (error) {
-    // Dosya yoksa varsayılan ayarları döndür
-    return defaultSettings
+    console.error("Get public settings error:", error)
+    return NextResponse.json({
+      success: false,
+      settings: {
+        trx_wallet_address: "TXYourTronWalletAddressHere",
+        card_price: "50",
+      },
+    })
   }
 }
 
-export async function GET() {
-  try {
-    const settings = await getSettings()
-    return NextResponse.json({ success: true, settings })
-  } catch (error) {
-    console.error("Get settings error:", error)
-    return NextResponse.json({ success: false, settings: defaultSettings })
+// Settings'i güncellemek için export
+export function updateSettings(newSettings: any) {
+  if (newSettings.trx_wallet_address) {
+    settings.trx_wallet_address = newSettings.trx_wallet_address
+  }
+  if (newSettings.card_price) {
+    settings.card_price = newSettings.card_price
   }
 }

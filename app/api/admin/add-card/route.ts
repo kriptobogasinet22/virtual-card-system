@@ -1,19 +1,22 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { createServerSupabaseClient } from "@/lib/supabase"
-import { requireAuth } from "@/lib/auth"
+import { getSession } from "@/lib/auth"
 
 export async function POST(req: NextRequest) {
   try {
     console.log("Add card API called")
 
-    // Kimlik doğrulama kontrolü
-    try {
-      await requireAuth()
-      console.log("Auth successful")
-    } catch (authError) {
-      console.error("Auth failed:", authError)
-      return NextResponse.json({ success: false, message: "Yetkilendirme hatası" }, { status: 401 })
+    // Session kontrolü (redirect yerine JSON response)
+    const session = await getSession()
+    if (!session) {
+      console.log("No valid session found")
+      return NextResponse.json(
+        { success: false, message: "Oturum bulunamadı. Lütfen tekrar giriş yapın." },
+        { status: 401 },
+      )
     }
+
+    console.log("Session valid:", session)
 
     // Request body'yi parse et
     let body

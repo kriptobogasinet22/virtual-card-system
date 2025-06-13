@@ -56,6 +56,10 @@ export default function CardsTable({ cards }: CardsTableProps) {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
+  const [isEditBalanceDialogOpen, setIsEditBalanceDialogOpen] = useState(false)
+  const [selectedCardForEdit, setSelectedCardForEdit] = useState<Card | null>(null)
+  const [newBalance, setNewBalance] = useState(0)
+
   const handleAddCard = async () => {
     setProcessing(true)
     setError("")
@@ -121,6 +125,45 @@ export default function CardsTable({ cards }: CardsTableProps) {
     } catch (error) {
       console.error("Error adding card:", error)
       setError("İşlem sırasında bir hata oluştu. Lütfen tekrar deneyin.")
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  const handleUpdateBalance = async () => {
+    if (!selectedCardForEdit) return
+
+    setProcessing(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      const response = await fetch("/api/admin/update-card-balance", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          cardId: selectedCardForEdit.id,
+          newBalance: newBalance,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (response.ok && result.success) {
+        setSuccess(result.message || "Bakiye başarıyla güncellendi")
+        setTimeout(() => {
+          setIsEditBalanceDialogOpen(false)
+          setSuccess("")
+          router.refresh()
+        }, 1500)
+      } else {
+        setError(result.message || "Bakiye güncellenirken bir hata oluştu")
+      }
+    } catch (error) {
+      console.error("Error updating balance:", error)
+      setError("İşlem sırasında bir hata oluştu")
     } finally {
       setProcessing(false)
     }
@@ -193,12 +236,13 @@ export default function CardsTable({ cards }: CardsTableProps) {
               <TableHead>Durum</TableHead>
               <TableHead>Kullanıcı</TableHead>
               <TableHead>Atanma Tarihi</TableHead>
+              <TableHead>İşlemler</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {cards.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-4">
+                <TableCell colSpan={8} className="text-center py-4">
                   Henüz kart bulunmamaktadır.
                 </TableCell>
               </TableRow>
@@ -215,6 +259,21 @@ export default function CardsTable({ cards }: CardsTableProps) {
                     {getUserSubtext(card.users)}
                   </TableCell>
                   <TableCell>{formatDate(card.assigned_at)}</TableCell>
+                  <TableCell>
+                    <div className="flex space-x-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedCardForEdit(card)
+                          setNewBalance(card.balance)
+                          setIsEditBalanceDialogOpen(true)
+                        }}
+                      >
+                        Bakiye Düzenle
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))
             )}
@@ -317,6 +376,72 @@ export default function CardsTable({ cards }: CardsTableProps) {
             </Button>
             <Button onClick={handleAddCard} disabled={processing}>
               {processing ? "Ekleniyor..." : "Ekle"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bakiye Düzenleme Dialog */}
+      <Dialog open={isEditBalanceDialogOpen} onOpenChange={setIsEditBalanceDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Kart Bakiyesi Düzenle</DialogTitle>
+            <DialogDescription>Kartın mevcut bakiyesini güncelleyin.</DialogDescription>
+          </DialogHeader>
+
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {success && (
+            <Alert className="border-green-200 bg-green-50">
+              <CheckCircle className="h-4 w-4 text-green-600" />
+              <AlertDescription className="text-green-800">{success}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Kart Numarası</Label>
+              <div className="font-mono">
+                {selectedCardForEdit ? formatCardNumber(selectedCardForEdit.card_number) : ""}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Mevcut Bakiye</Label>
+              <div>{selectedCardForEdit?.balance} TL</div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new_balance">Yeni Bakiye (TL)</Label>
+              <Input
+                id="new_balance"
+                type="number"
+                min="0"
+                step="0.01"
+                value={newBalance || ""}
+                onChange={(e) => setNewBalance(Number.parseFloat(e.target.value) || 0)}
+                placeholder="0"
+                required
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsEditBalanceDialogOpen(false)
+                setError("")
+                setSuccess("")
+              }}
+              disabled={processing}
+            >
+              İptal
+            </Button>
+            <Button onClick={handleUpdateBalance} disabled={processing || newBalance < 0}>
+              {processing ? "Güncelleniyor..." : "Güncelle"}
             </Button>
           </DialogFooter>
         </DialogContent>

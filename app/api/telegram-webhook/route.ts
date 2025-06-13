@@ -232,12 +232,31 @@ async function createCardRedemptionRequest(
   }
 }
 
-// TRX cüzdan adresini dinamik olarak al
+// TRX cüzdan adresini dinamik olarak al - düzeltilmiş versiyon
 async function getTrxWalletAddress() {
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/get-settings`)
+    console.log("Fetching TRX wallet address...")
+
+    // Doğrudan admin settings API'sini çağır
+    const response = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/get-settings`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    })
+
+    if (!response.ok) {
+      console.error("Failed to fetch settings:", response.status)
+      return "TXYourTronWalletAddressHere"
+    }
+
     const data = await response.json()
-    return data.settings?.trx_wallet_address || "TXYourTronWalletAddressHere"
+    console.log("Settings response:", data)
+
+    const address = data.settings?.trx_wallet_address || "TXYourTronWalletAddressHere"
+    console.log("Using TRX address:", address)
+
+    return address
   } catch (error) {
     console.error("Error fetching TRX address:", error)
     return "TXYourTronWalletAddressHere"
@@ -667,7 +686,7 @@ Talep ID: \`${paymentRequest.id}\`
           return NextResponse.json({ ok: true })
         }
 
-        // Sadece aktif kartları göster
+        // Sadece aktif kartları göster (is_used = false VE balance > 0)
         const activeCards = cards.filter((card) => !card.is_used && card.balance > 0)
 
         if (activeCards.length === 0) {

@@ -573,3 +573,4 @@ Daha fazla soru için bize ulaşabilirsiniz.
     return NextResponse.json({ error: "Internal server error", message: error.message }, { status: 500 })
   }
 }
+

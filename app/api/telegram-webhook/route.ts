@@ -143,13 +143,15 @@ function clearUserState(chatId: number) {
   console.log(`[${chatId}] State cleared`)
 }
 
-// Ödeme talebi oluşturma
-async function createPaymentRequest(userId: string, cardBalance: number) {
+// Ödeme talebi oluşturma - düzeltilmiş versiyon
+async function createPaymentRequest(userId: string, cardBalance: number, telegramId: number) {
   const supabase = createServerSupabaseClient()
   const serviceFee = cardBalance * 0.2
   const totalAmount = cardBalance + serviceFee
 
   try {
+    console.log(`Creating payment request for user ${userId}, balance: ${cardBalance}`)
+
     const { data, error } = await supabase
       .from("payment_requests")
       .insert({
@@ -158,6 +160,8 @@ async function createPaymentRequest(userId: string, cardBalance: number) {
         service_fee: serviceFee,
         total_amount: totalAmount,
         status: "pending",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .select()
       .single()
@@ -167,6 +171,7 @@ async function createPaymentRequest(userId: string, cardBalance: number) {
       return null
     }
 
+    console.log("Payment request created successfully:", data)
     return data
   } catch (error) {
     console.error("Database error in createPaymentRequest:", error)
@@ -301,6 +306,45 @@ Lütfen yapmak istediğiniz işlemi seçin:`
 
         await sendTelegramMessage(chatId, welcomeMessage, { reply_markup: keyboard })
         setUserState(chatId, "main_menu", { user_id: userData?.id })
+        return NextResponse.json({ ok: true })
+      }
+
+      // /mycards komutu
+      if (text === "/mycards") {
+        console.log(`[${chatId}] Processing /mycards command`)
+
+        // Kullanıcı bilgilerini al
+        const userId = userData?.id
+
+        if (!userId) {
+          await sendTelegramMessage(chatId, "❌ Kullanıcı bilgileriniz bulunamadı. Lütfen /start komutunu kullanın.")
+          return NextResponse.json({ ok: true })
+        }
+
+        // Kullanıcının kartlarını getir
+        const cards = await getUserCards(userId)
+
+        if (cards.length === 0) {
+          await sendTelegramMessage(chatId, "❌ Henüz bir sanal kartınız bulunmamaktadır.")
+          return NextResponse.json({ ok: true })
+        }
+
+        // Kartları detaylı şekilde listele
+        let message = "💳 *Sanal Kartlarınız:*\n\n"
+
+        cards.forEach((card, index) => {
+          message += `*${index + 1}. Kart*\n`
+          message += `🔢 Kart No: \`${card.card_number}\`\n`
+          message += `🔐 CVV: \`${card.cvv}\`\n`
+          message += `📅 Son Kullanma: \`${card.expiry_date}\`\n`
+          message += `💰 Bakiye: \`${card.balance} TL\`\n`
+          message += `📊 Durum: ${card.is_used ? "❌ Kullanılmış" : "✅ Aktif"}\n`
+          message += `📆 Alım Tarihi: ${new Date(card.assigned_at || card.created_at).toLocaleDateString("tr-TR")}\n\n`
+        })
+
+        message += "⚠️ *Güvenlik Uyarısı:*\nKart bilgilerinizi kimseyle paylaşmayın!"
+
+        await sendTelegramMessage(chatId, message)
         return NextResponse.json({ ok: true })
       }
 
@@ -522,10 +566,12 @@ Talep ID: \`${redemptionRequest.id}\``,
           return NextResponse.json({ ok: true })
         }
 
-        // Ödeme talebi oluştur
-        const paymentRequest = await createPaymentRequest(userId, stateData.payment_info.cardBalance)
+        // Ödeme talebi oluştur - telegram_id'yi de geç
+        const paymentRequest = await createPaymentRequest(userId, stateData.payment_info.cardBalance, chatId)
 
         if (paymentRequest) {
+          console.log(`[${chatId}] Payment request created successfully:`, paymentRequest.id)
+
           await sendTelegramMessage(
             chatId,
             `✅ *Ödeme talebiniz alındı!*
@@ -539,6 +585,7 @@ Talep ID: \`${paymentRequest.id}\`
           // Kullanıcı durumunu temizle
           setUserState(chatId, "main_menu")
         } else {
+          console.error(`[${chatId}] Failed to create payment request`)
           await sendTelegramMessage(
             chatId,
             "❌ Ödeme talebi oluşturulurken bir hata oluştu. Lütfen daha sonra tekrar deneyin.",
@@ -564,9 +611,17 @@ Talep ID: \`${paymentRequest.id}\`
           return NextResponse.json({ ok: true })
         }
 
+        // Sadece aktif kartları göster
+        const activeCards = cards.filter((card) => !card.is_used && card.balance > 0)
+
+        if (activeCards.length === 0) {
+          await sendTelegramMessage(chatId, "❌ Bozuma uygun aktif kartınız bulunmamaktadır.")
+          return NextResponse.json({ ok: true })
+        }
+
         // Kartları listele
         const keyboard = {
-          inline_keyboard: cards.map((card) => {
+          inline_keyboard: activeCards.map((card) => {
             return [
               {
                 text: `💳 ${card.card_number.slice(-4)} - Bakiye: ${card.balance} TL`,
@@ -607,15 +662,20 @@ Talep ID: \`${paymentRequest.id}\`
           return NextResponse.json({ ok: true })
         }
 
-        // Kartları listele
-        let message = "💳 *Kartlarınız:*\n\n"
+        // Kartları detaylı şekilde listele
+        let message = "💳 *Sanal Kartlarınız:*\n\n"
 
         cards.forEach((card, index) => {
-          message += `*${index + 1}.* Kart: \`${card.card_number.slice(0, 4)}...${card.card_number.slice(-4)}\`\n`
-          message += `   Bakiye: \`${card.balance} TL\`\n`
-          message += `   Son Kullanma: \`${card.expiry_date}\`\n`
-          message += `   Durum: ${card.is_used ? "❌ Kullanılmış" : "✅ Aktif"}\n\n`
+          message += `*${index + 1}. Kart*\n`
+          message += `🔢 Kart No: \`${card.card_number}\`\n`
+          message += `🔐 CVV: \`${card.cvv}\`\n`
+          message += `📅 Son Kullanma: \`${card.expiry_date}\`\n`
+          message += `💰 Bakiye: \`${card.balance} TL\`\n`
+          message += `📊 Durum: ${card.is_used ? "❌ Kullanılmış" : "✅ Aktif"}\n`
+          message += `📆 Alım Tarihi: ${new Date(card.assigned_at || card.created_at).toLocaleDateString("tr-TR")}\n\n`
         })
+
+        message += "⚠️ *Güvenlik Uyarısı:*\nKart bilgilerinizi kimseyle paylaşmayın!"
 
         await sendTelegramMessage(chatId, message)
       } else if (data === "help") {

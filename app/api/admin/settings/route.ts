@@ -1,15 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { requireAuth } from "@/lib/auth"
-
-// In-memory settings (production'da database kullanın)
-const settings = {
-  trx_wallet_address: "TXYourTronWalletAddressHere",
-  card_price: "50",
-}
+import { getGlobalSettings, updateGlobalSettings } from "@/lib/settings"
 
 export async function GET() {
   try {
     await requireAuth()
+    const settings = getGlobalSettings()
     console.log("Getting settings:", settings)
     return NextResponse.json({ success: true, settings })
   } catch (error) {
@@ -25,20 +21,13 @@ export async function POST(req: NextRequest) {
     const newSettings = await req.json()
     console.log("Updating settings with:", newSettings)
 
-    // Ayarları güncelle
-    if (newSettings.trx_wallet_address) {
-      settings.trx_wallet_address = newSettings.trx_wallet_address
-    }
-    if (newSettings.card_price) {
-      settings.card_price = newSettings.card_price
-    }
-
-    console.log("Settings updated to:", settings)
+    // Global settings'i güncelle
+    const updatedSettings = updateGlobalSettings(newSettings)
 
     return NextResponse.json({
       success: true,
       message: "Ayarlar başarıyla kaydedildi",
-      settings: settings,
+      settings: updatedSettings,
     })
   } catch (error) {
     console.error("Update settings error:", error)

@@ -1,4 +1,5 @@
 import { cookies } from "next/headers"
+import { redirect } from "next/navigation"
 
 export interface AdminSession {
   id: string
@@ -6,7 +7,6 @@ export interface AdminSession {
   createdAt: number
 }
 
-// Simple session management without JWT dependency
 export async function getSession(): Promise<AdminSession | null> {
   try {
     const cookieStore = await cookies()
@@ -24,7 +24,6 @@ export async function getSession(): Promise<AdminSession | null> {
     const maxAge = 24 * 60 * 60 * 1000 // 24 hours in milliseconds
 
     if (sessionAge > maxAge) {
-      // Session expired, clear it
       await clearSession()
       return null
     }
@@ -71,11 +70,24 @@ export async function clearSession() {
   }
 }
 
-// Simple login function for demo purposes
+export async function requireAuth() {
+  const session = await getSession()
+
+  if (!session) {
+    console.log("No valid session found, redirecting to login")
+    redirect("/admin/login")
+  }
+
+  return session
+}
+
 export async function login(username: string, password: string) {
   try {
+    console.log("Login attempt:", { username })
+
     // Demo credentials
     if (username === "admin" && password === "admin123") {
+      console.log("Demo login successful")
       const session = await createSession({ id: "1", username: "admin" })
       if (session.success) {
         return { success: true, message: "Login successful" }
@@ -84,23 +96,25 @@ export async function login(username: string, password: string) {
 
     // If Supabase is available, try database login
     if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      const { createServerSupabaseClient } = await import("./supabase")
-      const supabase = createServerSupabaseClient()
+      try {
+        const { createServerSupabaseClient } = await import("./supabase")
+        const supabase = createServerSupabaseClient()
 
-      const { data: admin, error } = await supabase
-        .from("admins")
-        .select("id, username, password")
-        .eq("username", username)
-        .single()
+        const { data: admin, error } = await supabase
+          .from("admins")
+          .select("id, username, password")
+          .eq("username", username)
+          .single()
 
-      if (!error && admin) {
-        // Simple password comparison (in production, use bcrypt)
-        if (admin.password === password) {
+        if (!error && admin && admin.password === password) {
+          console.log("Database login successful")
           const session = await createSession({ id: admin.id, username: admin.username })
           if (session.success) {
             return { success: true, message: "Login successful" }
           }
         }
+      } catch (dbError) {
+        console.error("Database login error:", dbError)
       }
     }
 

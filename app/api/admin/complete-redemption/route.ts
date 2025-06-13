@@ -4,6 +4,8 @@ import { requireAuth } from "@/lib/auth"
 
 export async function POST(req: NextRequest) {
   try {
+    console.log("=== COMPLETE REDEMPTION API ===")
+
     // Kimlik doğrulama kontrolü
     await requireAuth()
 
@@ -14,6 +16,18 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = createServerSupabaseClient()
+
+    // Önce bozum talebini al ve kart ID'sini bul
+    const { data: redemptionData, error: redemptionSelectError } = await supabase
+      .from("card_redemption_requests")
+      .select("card_id")
+      .eq("id", redemptionId)
+      .single()
+
+    if (redemptionSelectError || !redemptionData) {
+      console.error("Redemption not found:", redemptionSelectError)
+      return NextResponse.json({ success: false, message: "Bozum talebi bulunamadı" }, { status: 404 })
+    }
 
     // Bozum talebini güncelle
     const { error: redemptionError } = await supabase
@@ -27,6 +41,21 @@ export async function POST(req: NextRequest) {
     if (redemptionError) {
       console.error("Error updating redemption:", redemptionError)
       return NextResponse.json({ success: false, message: "Bozum güncellenirken bir hata oluştu" }, { status: 500 })
+    }
+
+    // Kartı kullanılmış olarak işaretle ve bakiyesini sıfırla
+    const { error: cardError } = await supabase
+      .from("virtual_cards")
+      .update({
+        is_used: true,
+        balance: 0,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", redemptionData.card_id)
+
+    if (cardError) {
+      console.error("Error updating card:", cardError)
+      // Bozum tamamlandı ama kart güncellenemedi, yine de devam et
     }
 
     // Kullanıcıya bildirim gönder

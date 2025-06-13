@@ -4,14 +4,17 @@ import { createServerSupabaseClient } from "@/lib/supabase"
 
 export async function GET() {
   try {
+    console.log("=== FETCHING CARDS ===")
     const session = await getSession()
 
     if (!session) {
+      console.log("No session found")
       return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 })
     }
 
     const supabase = createServerSupabaseClient()
 
+    console.log("Querying virtual_cards table")
     const { data: cards, error } = await supabase
       .from("virtual_cards")
       .select(`
@@ -39,6 +42,8 @@ export async function GET() {
       console.error("Error fetching cards:", error)
       return NextResponse.json({ success: false, message: "Kartlar yüklenirken bir hata oluştu" }, { status: 500 })
     }
+
+    console.log(`Found ${cards?.length || 0} cards`)
 
     return NextResponse.json({
       success: true,

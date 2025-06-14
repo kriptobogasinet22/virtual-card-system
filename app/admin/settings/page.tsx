@@ -36,13 +36,22 @@ export default function SettingsPage() {
         }
 
         // Ayarları yükle
+        console.log("Loading settings from database...")
         const settingsResponse = await fetch("/api/admin/settings")
         const settingsData = await settingsResponse.json()
+
+        console.log("Settings response:", settingsData)
+
         if (settingsData.success) {
+          console.log("Settings loaded successfully:", settingsData.settings)
           setSettings(settingsData.settings)
+        } else {
+          console.error("Failed to load settings:", settingsData.message)
+          setError(settingsData.message || "Ayarlar yüklenemedi")
         }
       } catch (error) {
-        console.error("Error:", error)
+        console.error("Error loading settings:", error)
+        setError("Ayarlar yüklenirken bir hata oluştu")
       } finally {
         setLoading(false)
       }

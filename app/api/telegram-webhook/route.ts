@@ -299,16 +299,18 @@ async function createCardRedemptionRequest(
   }
 }
 
+// TRX cüzdan adresini al fonksiyonunu güncelle:
+
 // TRX cüzdan adresini al
-function getTrxWalletAddress() {
+async function getTrxWalletAddress() {
   try {
-    console.log("Getting TRX wallet address from global settings...")
-    const settings = getGlobalSettings()
+    console.log("Getting TRX wallet address from database...")
+    const settings = await getGlobalSettings()
     const address = settings.trx_wallet_address || "TXYourTronWalletAddressHere"
-    console.log("Using TRX address:", address)
+    console.log("Using TRX address from database:", address)
     return address
   } catch (error) {
-    console.error("Error getting TRX address:", error)
+    console.error("Error getting TRX address from database:", error)
     return "TXYourTronWalletAddressHere"
   }
 }
@@ -430,7 +432,7 @@ async function confirmBalance(chatId: number, userId: string, balance: number) {
 
 💳 Kart Bakiyesi: ${balance} TL
 🔧 Hizmet Bedeli (%20): ${serviceFee} TL
-💵 Toplam Ödeme: ${totalAmount} TL
+💵 Toplam Ödeme: ${totalAmount} TRX
 
 📤 *Ödeme Adresi:*
 \`${trxAddress}\`

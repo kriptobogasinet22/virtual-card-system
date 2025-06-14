@@ -447,6 +447,8 @@ async function confirmBalance(chatId: number, userId: string, balance: number) {
   await sendTelegramMessage(chatId, message, { reply_markup: keyboard })
 }
 
+// showUserCards fonksiyonunu tamamen değiştir:
+
 // Kullanıcı kartlarını göster
 async function showUserCards(chatId: number, userId: string) {
   const cards = await getUserCards(userId)
@@ -469,22 +471,120 @@ Kart satın almak için "Sanal Kart Satın Al" seçeneğini kullanın.`
     return
   }
 
-  let message = `📋 *Kartlarınız*\n\n`
+  // Kartları aktif ve kullanılmış olarak ayır
+  const activeCards = cards.filter((card) => !card.is_used)
+  const usedCards = cards.filter((card) => card.is_used)
 
-  cards.forEach((card, index) => {
-    const status = card.is_used ? "❌ Kullanılmış" : "✅ Aktif"
-    const cardNumber = `**** **** **** ${card.card_number.slice(-4)}`
+  const message = `📋 *KART PORTFÖYÜNÜZ*
 
-    message += `${index + 1}. ${cardNumber}\n`
-    message += `   💰 Bakiye: ${card.balance} TL\n`
-    message += `   📊 Durum: ${status}\n`
-    message += `   📅 Son Kullanma: ${card.expiry_date}\n`
-    message += `   🔐 CVV: ${card.cvv}\n\n`
+💳 *Toplam Kart:* ${cards.length}
+✅ *Aktif Kart:* ${activeCards.length}
+❌ *Kullanılmış Kart:* ${usedCards.length}
+
+Görüntülemek istediğiniz kart kategorisini seçin:`
+
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: `✅ Aktif Kartlar (${activeCards.length})`, callback_data: "show_active_cards" },
+        { text: `❌ Kullanılmış Kartlar (${usedCards.length})`, callback_data: "show_used_cards" },
+      ],
+      [{ text: "🏠 Ana Menü", callback_data: "main_menu" }],
+    ],
+  }
+
+  await sendTelegramMessage(chatId, message, { reply_markup: keyboard })
+}
+
+// Aktif kartları göster
+async function showActiveCards(chatId: number, userId: string) {
+  const cards = await getUserCards(userId)
+  const activeCards = cards.filter((card) => !card.is_used)
+
+  if (activeCards.length === 0) {
+    const message = `✅ *AKTİF KARTLARINIZ*
+
+❌ Aktif kartınız bulunmamaktadır.
+
+Yeni kart satın almak için "Sanal Kart Satın Al" seçeneğini kullanın.`
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "💳 Kart Satın Al", callback_data: "buy_card" }],
+        [{ text: "📋 Kart Portföyü", callback_data: "my_cards" }],
+        [{ text: "🏠 Ana Menü", callback_data: "main_menu" }],
+      ],
+    }
+
+    await sendTelegramMessage(chatId, message, { reply_markup: keyboard })
+    return
+  }
+
+  let message = `✅ *AKTİF KARTLARINIZ*\n\n`
+
+  activeCards.forEach((card, index) => {
+    message += `🔹 *${index + 1}. Kart*\n`
+    message += `┣ 🔢 Kart No: \`${card.card_number}\`\n`
+    message += `┣ 🔐 CVV: \`${card.cvv}\`\n`
+    message += `┣ 📅 Son Kullanma: \`${card.expiry_date}\`\n`
+    message += `┣ 💰 Bakiye: \`${card.balance.toFixed(2)} TL\`\n`
+    message += `┣ 📊 Durum: Aktif ✅\n`
+    message += `┗ 📆 Atanma: ${new Date(card.assigned_at || card.created_at).toLocaleDateString("tr-TR")}\n\n`
   })
+
+  message += `🔒 *Güvenlik Uyarısı:*\nKart bilgilerinizi asla üçüncü şahıslarla paylaşmayın!`
 
   const keyboard = {
     inline_keyboard: [
       [{ text: "🔄 Kart Bozumu", callback_data: "redeem_card" }],
+      [{ text: "📋 Kart Portföyü", callback_data: "my_cards" }],
+      [{ text: "🏠 Ana Menü", callback_data: "main_menu" }],
+    ],
+  }
+
+  await sendTelegramMessage(chatId, message, { reply_markup: keyboard })
+}
+
+// Kullanılmış kartları göster
+async function showUsedCards(chatId: number, userId: string) {
+  const cards = await getUserCards(userId)
+  const usedCards = cards.filter((card) => card.is_used)
+
+  if (usedCards.length === 0) {
+    const message = `❌ *KULLANILMIŞ KARTLARINIZ*
+
+✅ Henüz kullanılmış kartınız bulunmamaktadır.
+
+Bu bölümde bozum yapılmış veya kullanılmış kartlarınızı görebilirsiniz.`
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "📋 Kart Portföyü", callback_data: "my_cards" }],
+        [{ text: "🏠 Ana Menü", callback_data: "main_menu" }],
+      ],
+    }
+
+    await sendTelegramMessage(chatId, message, { reply_markup: keyboard })
+    return
+  }
+
+  let message = `❌ *KULLANILMIŞ KARTLARINIZ*\n\n`
+
+  usedCards.forEach((card, index) => {
+    message += `🔸 *${index + 1}. Kart*\n`
+    message += `┣ 🔢 Kart No: \`${card.card_number}\`\n`
+    message += `┣ 🔐 CVV: \`${card.cvv}\`\n`
+    message += `┣ 📅 Son Kullanma: \`${card.expiry_date}\`\n`
+    message += `┣ 💰 Son Bakiye: \`${card.balance.toFixed(2)} TL\`\n`
+    message += `┣ 📊 Durum: Kullanılmış ❌\n`
+    message += `┗ 📆 Atanma: ${new Date(card.assigned_at || card.created_at).toLocaleDateString("tr-TR")}\n\n`
+  })
+
+  message += `📝 *Not:* Bu kartlar bozum yapılmış veya kullanılmış kartlardır.`
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "📋 Kart Portföyü", callback_data: "my_cards" }],
       [{ text: "🏠 Ana Menü", callback_data: "main_menu" }],
     ],
   }
@@ -672,6 +772,61 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true })
       }
 
+      // /mycards komutunu da güncelleyelim:
+
+      // /mycards komutu
+      if (text === "/mycards") {
+        console.log(`[${chatId}] Processing /mycards command`)
+
+        const userId = dbUser.id
+        const cards = await getUserCards(userId)
+
+        if (cards.length === 0) {
+          await sendTelegramMessage(
+            chatId,
+            "💳 *Sanal Kartlarınız*\n\n❌ Henüz hiç sanal kartınız bulunmamaktadır.\n\n💡 Hemen bir kart satın almak için /start komutunu kullanın!",
+          )
+          return NextResponse.json({ ok: true })
+        }
+
+        // Kartları aktif ve kullanılmış olarak ayır
+        const activeCards = cards.filter((card) => !card.is_used)
+        const usedCards = cards.filter((card) => card.is_used)
+
+        let message = "💳 *SANAL KART PORTFÖYÜNÜZ*\n\n"
+        message += `📊 *Özet:*\n`
+        message += `┣ 💳 Toplam Kart: ${cards.length}\n`
+        message += `┣ ✅ Aktif Kart: ${activeCards.length}\n`
+        message += `┗ ❌ Kullanılmış: ${usedCards.length}\n\n`
+
+        if (activeCards.length > 0) {
+          message += `✅ *AKTİF KARTLARINIZ:*\n\n`
+          activeCards.forEach((card, index) => {
+            message += `🔹 *${index + 1}. Kart*\n`
+            message += `┣ 🔢 Kart: \`${card.card_number}\`\n`
+            message += `┣ 🔐 CVV: \`${card.cvv}\`\n`
+            message += `┣ 📅 Geçerlilik: \`${card.expiry_date}\`\n`
+            message += `┣ 💰 Bakiye: \`${card.balance.toFixed(2)} TL\`\n`
+            message += `┗ 📆 Tarih: ${new Date(card.assigned_at || card.created_at).toLocaleDateString("tr-TR")}\n\n`
+          })
+        }
+
+        if (usedCards.length > 0) {
+          message += `❌ *KULLANILMIŞ KARTLARINIZ:*\n\n`
+          usedCards.forEach((card, index) => {
+            message += `🔸 *${index + 1}. Kart*\n`
+            message += `┣ 🔢 Kart: \`${card.card_number}\`\n`
+            message += `┣ 💰 Son Bakiye: \`${card.balance.toFixed(2)} TL\`\n`
+            message += `┗ 📆 Tarih: ${new Date(card.assigned_at || card.created_at).toLocaleDateString("tr-TR")}\n\n`
+          })
+        }
+
+        message += "🔒 *Güvenlik Uyarısı:*\nKart bilgilerinizi asla üçüncü şahıslarla paylaşmayın!"
+
+        await sendTelegramMessage(chatId, message)
+        return NextResponse.json({ ok: true })
+      }
+
       // State'e göre mesajları işle
       if (userState.state === "waiting_balance") {
         const balance = Number.parseFloat(text || "")
@@ -681,13 +836,15 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: true })
         }
 
-        if (balance < 10) {
-          await sendTelegramMessage(chatId, "❌ Minimum kart bakiyesi 10 TL olmalıdır.")
+        // Minimum bakiye kontrolünü düzeltelim:
+
+        if (balance < 500) {
+          await sendTelegramMessage(chatId, "❌ Minimum kart bakiyesi 500 TL olmalıdır.")
           return NextResponse.json({ ok: true })
         }
 
-        if (balance > 10000) {
-          await sendTelegramMessage(chatId, "❌ Maksimum kart bakiyesi 10.000 TL olabilir.")
+        if (balance > 50000) {
+          await sendTelegramMessage(chatId, "❌ Maksimum kart bakiyesi 50.000 TL olabilir.")
           return NextResponse.json({ ok: true })
         }
 
@@ -815,6 +972,14 @@ Talebiniz incelendikten sonra ödemeniz yapılacaktır.`,
 
         case "live_support":
           await sendTelegramMessage(chatId, "📞 *Canlı Destek*\n\nBu özellik yakında aktif olacak!")
+          break
+
+        case "show_active_cards":
+          await showActiveCards(chatId, dbUser.id)
+          break
+
+        case "show_used_cards":
+          await showUsedCards(chatId, dbUser.id)
           break
 
         default:

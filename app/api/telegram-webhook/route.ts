@@ -320,7 +320,7 @@ async function showMainMenu(chatId: number, userName?: string) {
 👋 Hoş geldiniz ${userName || "Değerli Müşterimiz"}!
 
 🎯 *Premium Hizmetlerimiz:*
-┣ 💳 Anında sanal kart teslimatı
+┣ 💳 Anında sanal kart teslimatı (Min: 500 TL)
 ┣ 🔄 Güvenli bakiye bozumu
 ┣ 📱 7/24 otomatik işlem
 ┗ 🔒 Bankacılık seviyesi güvenlik
@@ -352,7 +352,7 @@ async function showHelpMessage(chatId: number) {
   const helpMessage = `🆘 *YARDIM & DESTEK MERKEZİ*
 
 🎯 *Hızlı Başlangıç Rehberi:*
-┣ 💳 Kart satın almak için bakiye belirtin
+┣ 💳 Kart satın almak için bakiye belirtin (Min: 500 TL)
 ┣ 🔄 Kart bozmak için aktif kartınızı seçin
 ┣ 📋 Kartlarınızı görüntülemek için "Kartlarım"
 ┗ 📊 Hesap özetinizi kontrol edin
@@ -398,11 +398,22 @@ async function handleCardPurchase(chatId: number, userId: string) {
 
   const message = `💳 *Sanal Kart Satın Alma*
 
-Lütfen satın almak istediğiniz kartın bakiyesini TL cinsinden girin.
+🎯 *Premium Sanal Kart Özellikleri:*
+┣ ✅ Anında kullanıma hazır
+┣ 🌍 Tüm online platformlarda geçerli
+┣ 🔒 256-bit SSL güvenlik
+┗ 💯 %100 başarı garantisi
 
-📝 *Örnek:* 100
+💰 *Fiyatlandırma:*
+┣ 🎯 İstediğiniz bakiye + %20 hizmet bedeli
+┣ 💵 Minimum: 500 TL
+┗ 🏆 Maksimum: 50.000 TL
 
-💡 *Not:* Girdiğiniz tutara %20 hizmet bedeli eklenecektir.
+📝 Lütfen istediğiniz kart bakiyesini TL cinsinden yazın:
+
+💡 *Örnek:* 1000
+
+⚠️ *Not:* Minimum 500 TL, maksimum 50.000 TL
 
 İptal etmek için /start yazın.`
 
@@ -528,12 +539,33 @@ Bozuma uygun kartlarınız:\n\n`
 
 // Hesap özeti gösterme
 async function showAccountSummary(chatId: number, userId: string) {
+  const supabase = createServerSupabaseClient()
+
+  // Kartları al
   const cards = await getUserCards(userId)
 
   const totalCards = cards.length
   const activeCards = cards.filter((card) => !card.is_used).length
   const usedCards = cards.filter((card) => card.is_used).length
   const totalBalance = cards.reduce((sum, card) => sum + card.balance, 0)
+
+  // Bu ay harcanan tutarı hesapla
+  const currentMonth = new Date().toISOString().slice(0, 7) // YYYY-MM format
+  let monthlySpending = 0
+
+  try {
+    const { data: spendingData, error: spendingError } = await supabase
+      .from("user_spending")
+      .select("amount_spent")
+      .eq("user_id", userId)
+      .eq("month_year", currentMonth)
+
+    if (!spendingError && spendingData) {
+      monthlySpending = spendingData.reduce((sum, record) => sum + record.amount_spent, 0)
+    }
+  } catch (error) {
+    console.error("Error fetching spending data:", error)
+  }
 
   const summaryMessage = `📊 *HESAP ÖZETİNİZ*
 
@@ -551,7 +583,7 @@ async function showAccountSummary(chatId: number, userId: string) {
 📈 *Bu Ay:*
 ┣ 🛒 Satın Alınan: ${totalCards} kart
 ┣ 🔄 Bozulan: ${usedCards} kart
-┗ 💸 Harcanan: Hesaplanıyor...
+┗ 💸 Harcanan: ${monthlySpending.toFixed(2)} TL
 
 🎯 *Öneriler:*
 ${activeCards > 0 ? "✅ Aktif kartlarınızı kullanmayı unutmayın!" : "💡 Yeni kart satın almayı düşünün!"}

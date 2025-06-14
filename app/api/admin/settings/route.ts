@@ -5,12 +5,21 @@ import { getGlobalSettings, updateGlobalSettings } from "@/lib/settings"
 export async function GET() {
   try {
     await requireAuth()
-    const settings = getGlobalSettings()
-    console.log("Getting settings:", settings)
+
+    console.log("=== GETTING SETTINGS FROM DATABASE ===")
+    const settings = await getGlobalSettings()
+    console.log("Settings retrieved:", settings)
+
     return NextResponse.json({ success: true, settings })
   } catch (error) {
     console.error("Get settings error:", error)
-    return NextResponse.json({ success: false, message: "Ayarlar yüklenirken bir hata oluştu" }, { status: 500 })
+    return NextResponse.json(
+      {
+        success: false,
+        message: `Ayarlar yüklenirken bir hata oluştu: ${error instanceof Error ? error.message : "Bilinmeyen hata"}`,
+      },
+      { status: 500 },
+    )
   }
 }
 
@@ -19,10 +28,12 @@ export async function POST(req: NextRequest) {
     await requireAuth()
 
     const newSettings = await req.json()
-    console.log("Updating settings with:", newSettings)
+    console.log("=== UPDATING SETTINGS IN DATABASE ===")
+    console.log("New settings received:", newSettings)
 
-    // Global settings'i güncelle
-    const updatedSettings = updateGlobalSettings(newSettings)
+    // Ayarları veritabanında güncelle
+    const updatedSettings = await updateGlobalSettings(newSettings)
+    console.log("Settings updated successfully:", updatedSettings)
 
     return NextResponse.json({
       success: true,
@@ -34,7 +45,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        message: `Ayarlar kaydedilirken bir hata oluştu: ${error.message}`,
+        message: `Ayarlar kaydedilirken bir hata oluştu: ${error instanceof Error ? error.message : "Bilinmeyen hata"}`,
       },
       { status: 500 },
     )

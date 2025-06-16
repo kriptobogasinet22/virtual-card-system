@@ -432,7 +432,7 @@ async function confirmBalance(chatId: number, userId: string, balance: number) {
 
 💳 Kart Bakiyesi: ${balance} TL
 🔧 Hizmet Bedeli (%20): ${serviceFee} TL
-💵 Toplam Ödeme: ${totalAmount} TRX
+💵 Toplam Ödeme: ${totalAmount} TL
 
 📤 *Ödeme Adresi:*
 \`${trxAddress}\`

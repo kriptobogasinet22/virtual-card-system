@@ -5,6 +5,7 @@ export async function getGlobalSettings() {
   try {
     const supabase = createServerSupabaseClient()
 
+    console.log("Fetching settings from database...")
     const { data: settings, error } = await supabase.from("system_settings").select("setting_key, setting_value")
 
     if (error) {
@@ -15,6 +16,8 @@ export async function getGlobalSettings() {
         card_price: "50",
       }
     }
+
+    console.log("Raw settings from database:", settings)
 
     // Ayarları obje formatına çevir
     const settingsObj: Record<string, string> = {}
@@ -28,7 +31,7 @@ export async function getGlobalSettings() {
       card_price: settingsObj.card_price || "50",
     }
 
-    console.log("Settings loaded from database:", result)
+    console.log("Processed settings:", result)
     return result
   } catch (error) {
     console.error("Database error in getGlobalSettings:", error)
@@ -51,37 +54,84 @@ export async function updateGlobalSettings(newSettings: any) {
     const updatePromises = []
 
     if (newSettings.trx_wallet_address !== undefined) {
-      updatePromises.push(
-        supabase.from("system_settings").upsert({
-          setting_key: "trx_wallet_address",
-          setting_value: newSettings.trx_wallet_address,
-          updated_at: new Date().toISOString(),
-        }),
-      )
+      console.log("Updating trx_wallet_address to:", newSettings.trx_wallet_address)
+
+      // Önce mevcut kaydı kontrol et
+      const { data: existing } = await supabase
+        .from("system_settings")
+        .select("id")
+        .eq("setting_key", "trx_wallet_address")
+        .single()
+
+      if (existing) {
+        // Mevcut kayıt varsa güncelle
+        updatePromises.push(
+          supabase
+            .from("system_settings")
+            .update({
+              setting_value: newSettings.trx_wallet_address,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("setting_key", "trx_wallet_address"),
+        )
+      } else {
+        // Mevcut kayıt yoksa ekle
+        updatePromises.push(
+          supabase.from("system_settings").insert({
+            setting_key: "trx_wallet_address",
+            setting_value: newSettings.trx_wallet_address,
+            description: "TRX ödemelerinin yapılacağı cüzdan adresi",
+          }),
+        )
+      }
     }
 
     if (newSettings.card_price !== undefined) {
-      updatePromises.push(
-        supabase.from("system_settings").upsert({
-          setting_key: "card_price",
-          setting_value: newSettings.card_price,
-          updated_at: new Date().toISOString(),
-        }),
-      )
+      console.log("Updating card_price to:", newSettings.card_price)
+
+      // Önce mevcut kaydı kontrol et
+      const { data: existing } = await supabase
+        .from("system_settings")
+        .select("id")
+        .eq("setting_key", "card_price")
+        .single()
+
+      if (existing) {
+        // Mevcut kayıt varsa güncelle
+        updatePromises.push(
+          supabase
+            .from("system_settings")
+            .update({
+              setting_value: newSettings.card_price,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("setting_key", "card_price"),
+        )
+      } else {
+        // Mevcut kayıt yoksa ekle
+        updatePromises.push(
+          supabase.from("system_settings").insert({
+            setting_key: "card_price",
+            setting_value: newSettings.card_price,
+            description: "Sanal kart satış fiyatı (TRX cinsinden)",
+          }),
+        )
+      }
     }
 
     // Tüm güncellemeleri bekle
     const results = await Promise.all(updatePromises)
 
     // Hata kontrolü
-    for (const result of results) {
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i]
       if (result.error) {
-        console.error("Error updating setting:", result.error)
+        console.error(`Error updating setting ${i}:`, result.error)
         throw new Error(`Setting update failed: ${result.error.message}`)
       }
     }
 
-    console.log("Settings updated successfully in database")
+    console.log("All settings updated successfully")
 
     // Güncellenmiş ayarları döndür
     return await getGlobalSettings()
@@ -119,14 +169,30 @@ export async function setSetting(key: string, value: string): Promise<boolean> {
   try {
     const supabase = createServerSupabaseClient()
 
-    const { error } = await supabase.from("system_settings").upsert({
-      setting_key: key,
-      setting_value: value,
-      updated_at: new Date().toISOString(),
-    })
+    // Önce mevcut kaydı kontrol et
+    const { data: existing } = await supabase.from("system_settings").select("id").eq("setting_key", key).single()
 
-    if (error) {
-      console.error(`Error setting ${key}:`, error)
+    let result
+    if (existing) {
+      // Mevcut kayıt varsa güncelle
+      result = await supabase
+        .from("system_settings")
+        .update({
+          setting_value: value,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("setting_key", key)
+    } else {
+      // Mevcut kayıt yoksa ekle
+      result = await supabase.from("system_settings").insert({
+        setting_key: key,
+        setting_value: value,
+        updated_at: new Date().toISOString(),
+      })
+    }
+
+    if (result.error) {
+      console.error(`Error setting ${key}:`, result.error)
       return false
     }
 

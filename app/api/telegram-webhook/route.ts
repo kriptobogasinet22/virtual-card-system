@@ -299,10 +299,8 @@ async function createCardRedemptionRequest(
   }
 }
 
-// TRX cüzdan adresini al fonksiyonunu güncelle:
-
-// TRX cüzdan adresini al
-async function getTrxWalletAddress() {
+// TRX cüzdan adresini al - ASYNC fonksiyon olarak düzeltildi
+async function getTrxWalletAddress(): Promise<string> {
   try {
     console.log("Getting TRX wallet address from database...")
     const settings = await getGlobalSettings()
@@ -422,11 +420,13 @@ async function handleCardPurchase(chatId: number, userId: string) {
   await sendTelegramMessage(chatId, message)
 }
 
-// Bakiye onaylama
+// Bakiye onaylama - ASYNC olarak düzeltildi ve await eklendi
 async function confirmBalance(chatId: number, userId: string, balance: number) {
   const serviceFee = balance * 0.2
   const totalAmount = balance + serviceFee
-  const trxAddress = getTrxWalletAddress()
+
+  // TRX adresini await ile al
+  const trxAddress = await getTrxWalletAddress()
 
   const message = `💰 *Ödeme Bilgileri*
 
@@ -448,8 +448,6 @@ async function confirmBalance(chatId: number, userId: string, balance: number) {
 
   await sendTelegramMessage(chatId, message, { reply_markup: keyboard })
 }
-
-// showUserCards fonksiyonunu tamamen değiştir:
 
 // Kullanıcı kartlarını göster
 async function showUserCards(chatId: number, userId: string) {
@@ -774,8 +772,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true })
       }
 
-      // /mycards komutunu da güncelleyelim:
-
       // /mycards komutu
       if (text === "/mycards") {
         console.log(`[${chatId}] Processing /mycards command`)
@@ -837,8 +833,6 @@ export async function POST(req: NextRequest) {
           await sendTelegramMessage(chatId, "❌ Lütfen geçerli bir bakiye miktarı girin (örnek: 100)")
           return NextResponse.json({ ok: true })
         }
-
-        // Minimum bakiye kontrolünü düzeltelim:
 
         if (balance < 500) {
           await sendTelegramMessage(chatId, "❌ Minimum kart bakiyesi 500 TL olmalıdır.")
